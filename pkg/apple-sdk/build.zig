@@ -41,14 +41,37 @@ pub fn addPaths(
     });
 
     if (!gop.found_existing) {
-        // Detect our SDK using the "findNative" Zig stdlib function.
-        // This is really important because it forces using `xcrun` to
-        // find the SDK path.
-        const libc = try std.zig.LibCInstallation.findNative(.{
-            .allocator = b.allocator,
-            .target = &step.rootModuleTarget(),
-            .verbose = false,
-        });
+        // Detect our SDK. Normally we call Zig's `findNative`, which
+        // shells out to `xcode-select`/`xcrun` to locate the active
+        // Xcode/Command Line Tools SDK. For sandboxed builds where
+        // those tools are unavailable (notably Nix), allow the caller
+        // to pre-seed the SDK path via `SDKROOT`, matching how most
+        // native toolchains honor that variable. The env var takes
+        // precedence so that an explicitly pinned SDK is never
+        // overridden by an ambient Xcode install.
+        const libc: std.zig.LibCInstallation = libc: {
+            if (std.process.getEnvVarOwned(b.allocator, "SDKROOT")) |sdkroot| {
+                const sys_include_dir = try std.fs.path.join(
+                    b.allocator,
+                    &.{ sdkroot, "usr", "include" },
+                );
+                break :libc .{
+                    .include_dir = sys_include_dir,
+                    .sys_include_dir = sys_include_dir,
+                };
+            } else |err| switch (err) {
+                error.EnvironmentVariableNotFound,
+                error.InvalidWtf8,
+                => {},
+                error.OutOfMemory => return error.OutOfMemory,
+            }
+
+            break :libc try std.zig.LibCInstallation.findNative(.{
+                .allocator = b.allocator,
+                .target = &step.rootModuleTarget(),
+                .verbose = false,
+            });
+        };
 
         // Render the file compatible with the `--libc` Zig flag.
         var stream: std.io.Writer.Allocating = .init(b.allocator);
