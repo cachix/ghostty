@@ -1,4 +1,5 @@
 {
+  apple-sdk,
   callPackage,
   git,
   lib,
@@ -18,10 +19,7 @@ stdenv.mkDerivation (finalAttrs: {
   version = "0.1.0-dev+${revision}-nix";
 
   # We limit source like this to try and reduce the amount of rebuilds as possible
-  # thus we only provide the source that is needed for the build
-  #
-  # NOTE: as of the current moment only linux files are provided,
-  # since darwin support is not finished
+  # thus we only provide the source that is needed for the build.
   src = lib.fileset.toSource {
     root = ../.;
     fileset = lib.fileset.intersection (lib.fileset.fromSource (lib.sources.cleanSource ../.)) (
@@ -39,11 +37,23 @@ stdenv.mkDerivation (finalAttrs: {
 
   deps = callPackage ../build.zig.zon.nix {name = "${finalAttrs.pname}-cache-${finalAttrs.version}";};
 
-  nativeBuildInputs = [
-    git
-    pkg-config
-    zig_0_15
-  ];
+  nativeBuildInputs =
+    [
+      git
+      pkg-config
+      zig_0_15
+    ]
+    # On darwin the Zig build invokes `pkg/apple-sdk/addPaths`, which
+    # normally shells out to `xcrun`/`xcode-select` to locate the active
+    # SDK. Neither is available in the Nix sandbox, so we provide an
+    # explicit SDK via `SDKROOT` (honored by the patched apple-sdk helper)
+    # and add the SDK's store path as a build input so it participates in
+    # hash inputs and runtime closure tracking.
+    ++ lib.optional stdenv.hostPlatform.isDarwin apple-sdk;
+
+  env = lib.optionalAttrs stdenv.hostPlatform.isDarwin {
+    SDKROOT = "${apple-sdk}";
+  };
 
   buildInputs = [];
 
@@ -67,15 +77,39 @@ stdenv.mkDerivation (finalAttrs: {
     "dev"
   ];
 
-  postInstall = ''
-    mkdir -p "$dev/lib"
-    mv "$out/lib/libghostty-vt.a" "$dev/lib"
-    rm "$out/lib/libghostty-vt.so"
-    mv "$out/include" "$dev"
-    mv "$out/share" "$dev"
-
-    ln -sf "$out/lib/libghostty-vt.so.${lib.versions.major finalAttrs.version}"  "$dev/lib/libghostty-vt.so"
-  '';
+  postInstall =
+    ''
+      mkdir -p "$dev/lib"
+      mv "$out/lib/libghostty-vt.a" "$dev/lib"
+      mv "$out/include" "$dev"
+      mv "$out/share" "$dev"
+    ''
+    + lib.optionalString stdenv.hostPlatform.isLinux ''
+      rm "$out/lib/libghostty-vt.so"
+      ln -sf "$out/lib/libghostty-vt.so.${lib.versions.major finalAttrs.version}"  "$dev/lib/libghostty-vt.so"
+    ''
+    + lib.optionalString stdenv.hostPlatform.isDarwin ''
+      # Zig's darwin install emits a versioned `libghostty-vt.<ver>.dylib`
+      # plus an unversioned `libghostty-vt.dylib` symlink in $out/lib.
+      # We want the build-time unversioned symlink to live in $dev so
+      # consumers can link via `-lghostty-vt` without pulling $out into
+      # their dev closure; remove $out's symlink and recreate an absolute
+      # one in $dev pointing at the versioned file in $out.
+      real=
+      for f in "$out/lib"/libghostty-vt*.dylib; do
+        if [ -e "$f" ] && [ ! -L "$f" ]; then
+          real="$f"
+          break
+        fi
+      done
+      if [ -z "$real" ]; then
+        echo "libghostty-vt: no versioned dylib found in $out/lib" >&2
+        ls -la "$out/lib" >&2
+        exit 1
+      fi
+      rm -f "$out/lib/libghostty-vt.dylib"
+      ln -sf "$real" "$dev/lib/libghostty-vt.dylib"
+    '';
 
   postFixup = ''
     substituteInPlace "$dev/share/pkgconfig/libghostty-vt.pc" \
