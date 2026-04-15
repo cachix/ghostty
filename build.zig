@@ -100,8 +100,10 @@ pub fn build(b: *std.Build) !void {
     if (config.emit_webdata) webdata.install();
 
     // Ghostty bench tools
-    const bench = try buildpkg.GhosttyBench.init(b, &deps);
-    if (config.emit_bench) bench.install();
+    if (config.emit_bench) {
+        const bench = try buildpkg.GhosttyBench.init(b, &deps);
+        bench.install();
+    }
 
     // Ghostty dist tarball
     const dist = try buildpkg.GhosttyDist.init(b, &config);
@@ -154,8 +156,11 @@ pub fn build(b: *std.Build) !void {
 
     // libghostty-vt xcframework (Apple only, universal binary).
     // Only when building on macOS (not cross-compiling) since
-    // xcodebuild is required.
-    if (builtin.os.tag.isDarwin() and config.target.result.os.tag.isDarwin()) {
+    // xcodebuild is required. Gated on emit_xcframework which
+    // defaults to false when emit_lib_vt is true (e.g. Nix builds).
+    if (builtin.os.tag.isDarwin() and config.target.result.os.tag.isDarwin() and
+        config.emit_xcframework)
+    {
         const apple_libs = try buildpkg.GhosttyLibVt.initStaticAppleUniversal(
             b,
             &config,
