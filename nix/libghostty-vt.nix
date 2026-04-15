@@ -40,6 +40,20 @@ stdenv.mkDerivation (finalAttrs: {
 
   deps = callPackage ../build.zig.zon.nix {name = "${finalAttrs.pname}-cache-${finalAttrs.version}";};
 
+  # Zig's build runner computes *relative* paths from a dependency's
+  # source directory (the Run-step CWD) back to the build artefacts in
+  # .zig-cache.  The Nix dep-cache stores each dependency as a symlink
+  # into /nix/store.  When the OS resolves the CWD through the symlink,
+  # the relative ".." components land in a different directory tree than
+  # the build runner expected — causing "FileNotFound" when it tries to
+  # spawn the compiled code-generator binary.
+  #
+  # Fix: dereference symlinks so every entry is a real directory and
+  # relative paths resolve correctly.
+  depsDeref = runCommand "${finalAttrs.pname}-deps-deref-${finalAttrs.version}" {} ''
+    cp -rL ${finalAttrs.deps}/ $out
+  '';
+
   nativeBuildInputs =
     [
       git
@@ -60,7 +74,7 @@ stdenv.mkDerivation (finalAttrs: {
 
   zigBuildFlags = [
     "--system"
-    "${finalAttrs.deps}"
+    "${finalAttrs.depsDeref}"
     "-Dlib-version-string=${finalAttrs.version}"
     "-Dcpu=baseline"
     "-Doptimize=${optimize}"
