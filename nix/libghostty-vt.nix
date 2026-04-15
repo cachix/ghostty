@@ -1,6 +1,7 @@
 {
   apple-sdk,
   callPackage,
+  darwin,
   git,
   lib,
   llvmPackages,
@@ -10,6 +11,7 @@
   testers,
   versionCheckHook,
   writableTmpDirAsHomeHook,
+  xcbuild,
   zig_0_15,
   revision ? "dirty",
   optimize ? "Debug",
@@ -45,17 +47,11 @@ stdenv.mkDerivation (finalAttrs: {
       writableTmpDirAsHomeHook
       zig_0_15
     ]
-    # On darwin the Zig build invokes `pkg/apple-sdk/addPaths`, which
-    # normally shells out to `xcrun`/`xcode-select` to locate the active
-    # SDK. Neither is available in the Nix sandbox, so we provide an
-    # explicit SDK via `SDKROOT` (honored by the patched apple-sdk helper)
-    # and add the SDK's store path as a build input so it participates in
-    # hash inputs and runtime closure tracking.
-    ++ lib.optional stdenv.hostPlatform.isDarwin apple-sdk;
-
-  env = lib.optionalAttrs stdenv.hostPlatform.isDarwin {
-    SDKROOT = "${apple-sdk}";
-  };
+    ++ lib.optionals stdenv.hostPlatform.isDarwin [
+      apple-sdk
+      darwin.cctools # provides libtool for creating static fat archives
+      xcbuild
+    ];
 
   buildInputs = [];
 
