@@ -9,6 +9,7 @@
   stdenv,
   testers,
   versionCheckHook,
+  writableTmpDirAsHomeHook,
   zig_0_15,
   revision ? "dirty",
   optimize ? "Debug",
@@ -41,6 +42,7 @@ stdenv.mkDerivation (finalAttrs: {
     [
       git
       pkg-config
+      writableTmpDirAsHomeHook
       zig_0_15
     ]
     # On darwin the Zig build invokes `pkg/apple-sdk/addPaths`, which
