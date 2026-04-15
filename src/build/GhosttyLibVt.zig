@@ -368,11 +368,25 @@ fn pkgConfigFiles(
     const libs_private = libsPrivate(zig);
     const requires_private = requiresPrivate(b);
 
+    // Resolve `includedir` and `libdir` to absolute paths instead of
+    // interpolating `${prefix}/include` and `${prefix}/lib`. When a packager
+    // installs libghostty-vt with split prefixes (e.g. Nix multi-output
+    // derivations that put headers in a `-dev` output and runtime libraries
+    // in the default output), `${prefix}/lib` points at the wrong directory
+    // and pkg-config-built consumers fail at runtime with
+    //   libghostty-vt.so.<N>: cannot open shared object file
+    // because the SONAME-versioned library doesn't live next to `prefix`.
+    // Honoring `--prefix-lib-dir` / `--prefix-include-dir` by asking zig for
+    // the resolved install path keeps the default single-prefix behavior
+    // identical and additionally makes split-prefix installs correct.
+    const includedir = b.getInstallPath(.header, "");
+    const libdir = b.getInstallPath(.lib, "");
+
     return .{
         .shared = wf.add("libghostty-vt.pc", b.fmt(
             \\prefix={s}
-            \\includedir=${{prefix}}/include
-            \\libdir=${{prefix}}/lib
+            \\includedir={s}
+            \\libdir={s}
             \\
             \\Name: libghostty-vt
             \\URL: https://github.com/ghostty-org/ghostty
@@ -382,11 +396,18 @@ fn pkgConfigFiles(
             \\Libs: -L${{libdir}} -lghostty-vt
             \\Libs.private: {s}
             \\Requires.private: {s}
-        , .{ b.install_prefix, zig.version, libs_private, requires_private })),
+        , .{
+            b.install_prefix,
+            includedir,
+            libdir,
+            zig.version,
+            libs_private,
+            requires_private,
+        })),
         .static = wf.add("libghostty-vt-static.pc", b.fmt(
             \\prefix={s}
-            \\includedir=${{prefix}}/include
-            \\libdir=${{prefix}}/lib
+            \\includedir={s}
+            \\libdir={s}
             \\
             \\Name: libghostty-vt-static
             \\URL: https://github.com/ghostty-org/ghostty
@@ -398,6 +419,8 @@ fn pkgConfigFiles(
             \\Requires.private: {s}
         , .{
             b.install_prefix,
+            includedir,
+            libdir,
             zig.version,
             staticLibraryName(os_tag),
             libs_private,

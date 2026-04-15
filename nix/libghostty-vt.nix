@@ -69,6 +69,14 @@ stdenv.mkDerivation (finalAttrs: {
     "-Dapp-runtime=none"
     "-Demit-lib-vt=true"
     "-Dsimd=${lib.boolToString simd}"
+    # Install headers directly into the `dev` output instead of letting
+    # them land in $out/include and relying on nixpkgs's multi-output
+    # fixup to relocate them. Because zig's pkg-config generator now
+    # records the resolved include path in libghostty-vt.pc, installing
+    # straight to $dev/include means the emitted `includedir=` is
+    # already correct -- no postFixup rewrite needed.
+    "--prefix-include-dir"
+    "${placeholder "dev"}/include"
   ];
   zigCheckFlags = finalAttrs.zigBuildFlags ++ ["test-lib-vt"];
 
@@ -77,47 +85,6 @@ stdenv.mkDerivation (finalAttrs: {
     "dev"
   ];
 
-  postInstall =
-    ''
-      mkdir -p "$dev/lib"
-      mv "$out/lib/libghostty-vt.a" "$dev/lib"
-      mv "$out/include" "$dev"
-      mv "$out/share" "$dev"
-    ''
-    + lib.optionalString stdenv.hostPlatform.isLinux ''
-      rm "$out/lib/libghostty-vt.so"
-      ln -sf "$out/lib/libghostty-vt.so.${lib.versions.major finalAttrs.version}"  "$dev/lib/libghostty-vt.so"
-    ''
-    + lib.optionalString stdenv.hostPlatform.isDarwin ''
-      # Zig's darwin install emits a versioned `libghostty-vt.<ver>.dylib`
-      # plus an unversioned `libghostty-vt.dylib` symlink in $out/lib.
-      # We want the build-time unversioned symlink to live in $dev so
-      # consumers can link via `-lghostty-vt` without pulling $out into
-      # their dev closure; remove $out's symlink and recreate an absolute
-      # one in $dev pointing at the versioned file in $out.
-      real=
-      for f in "$out/lib"/libghostty-vt*.dylib; do
-        if [ -e "$f" ] && [ ! -L "$f" ]; then
-          real="$f"
-          break
-        fi
-      done
-      if [ -z "$real" ]; then
-        echo "libghostty-vt: no versioned dylib found in $out/lib" >&2
-        ls -la "$out/lib" >&2
-        exit 1
-      fi
-      rm -f "$out/lib/libghostty-vt.dylib"
-      ln -sf "$real" "$dev/lib/libghostty-vt.dylib"
-    '';
-
-  postFixup = ''
-    substituteInPlace "$dev/share/pkgconfig/libghostty-vt.pc" \
-      --replace-fail "$out" "$dev"
-    substituteInPlace "$dev/share/pkgconfig/libghostty-vt-static.pc" \
-      --replace-fail "$out" "$dev"
-  '';
-
   passthru.tests = {
     sanity-check = let
       version = "${lib.versions.major finalAttrs.version}.${lib.versions.minor finalAttrs.version}.${lib.versions.patch finalAttrs.version}";
@@ -125,13 +92,13 @@ stdenv.mkDerivation (finalAttrs: {
       runCommand "sanity-check" {} (builtins.concatStringsSep "\n" [
         ''
           ${lib.getExe' stdenv.cc "nm"} "${finalAttrs.finalPackage}/lib/libghostty-vt.so.${version}" | grep -q 'T ghostty_terminal_new'
-          ${lib.getExe' stdenv.cc "nm"} "${finalAttrs.finalPackage.dev}/lib/libghostty-vt.a" | grep -q 'T ghostty_terminal_new'
+          ${lib.getExe' stdenv.cc "nm"} "${finalAttrs.finalPackage}/lib/libghostty-vt.a" | grep -q 'T ghostty_terminal_new'
         ''
         (
           lib.optionalString simd
           ''
-            ${lib.getExe' stdenv.cc "nm"} "${finalAttrs.finalPackage.dev}/lib/libghostty-vt.a" | grep -q 'T .*simdutf'
-            ${lib.getExe' stdenv.cc "nm"} "${finalAttrs.finalPackage.dev}/lib/libghostty-vt.a" | grep -q 'T .*3hwy'
+            ${lib.getExe' stdenv.cc "nm"} "${finalAttrs.finalPackage}/lib/libghostty-vt.a" | grep -q 'T .*simdutf'
+            ${lib.getExe' stdenv.cc "nm"} "${finalAttrs.finalPackage}/lib/libghostty-vt.a" | grep -q 'T .*3hwy'
           ''
         )
         ''
@@ -148,7 +115,7 @@ stdenv.mkDerivation (finalAttrs: {
         export PKG_CONFIG_PATH="${finalAttrs.finalPackage.dev}/share/pkgconfig"
 
         pkg-config --libs --static libghostty-vt | grep -q -- '-lghostty-vt'
-        pkg-config --libs --static libghostty-vt-static | grep -q -- '${finalAttrs.finalPackage.dev}/lib/libghostty-vt.a'
+        pkg-config --libs --static libghostty-vt-static | grep -q -- '${finalAttrs.finalPackage}/lib/libghostty-vt.a'
 
         touch "$out"
       '';
@@ -162,8 +129,7 @@ stdenv.mkDerivation (finalAttrs: {
         runHook preBuildHooks
 
         cc -o test test_libghostty_vt.c \
-          ''$(pkg-config --cflags --libs libghostty-vt) \
-          -Wl,-rpath,"${finalAttrs.finalPackage}/lib"
+          ''$(pkg-config --cflags --libs libghostty-vt)
 
         runHook postBuildHooks
       '';
@@ -241,8 +207,7 @@ stdenv.mkDerivation (finalAttrs: {
         runHook preBuildHooks
 
         cc -o test main.c \
-          ''$(pkg-config --cflags --libs libghostty-vt) \
-          -Wl,-rpath,"${finalAttrs.finalPackage}/lib"
+          ''$(pkg-config --cflags --libs libghostty-vt)
 
         runHook postBuildHooks
       '';
