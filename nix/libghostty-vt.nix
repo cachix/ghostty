@@ -97,6 +97,17 @@ stdenv.mkDerivation (finalAttrs: {
     "dev"
   ];
 
+  # The zig build sets the dylib install name to @rpath/libghostty-vt.dylib,
+  # which requires every consuming binary to embed a matching LC_RPATH.
+  # Rewrite to the absolute path so the linker records it directly.
+  postFixup = lib.optionalString stdenv.hostPlatform.isDarwin ''
+    for dylib in "$out"/lib/libghostty-vt*.dylib; do
+      if [ -f "$dylib" ] && ! [ -L "$dylib" ]; then
+        install_name_tool -id "$dylib" "$dylib"
+      fi
+    done
+  '';
+
   passthru.tests = {
     sanity-check = let
       version = "${lib.versions.major finalAttrs.version}.${lib.versions.minor finalAttrs.version}.${lib.versions.patch finalAttrs.version}";
